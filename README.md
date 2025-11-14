@@ -1,0 +1,1 @@
+# minio-exporter-for-ibm-instana
