@@ -33,10 +33,9 @@ func getenv(key, fallback string) string {
 
 func makeHandler(minioPath string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		fullURL := minioBaseURL + minioPath
-		log.Printf("[Polling] update metrics from %s", fullURL)
+		log.Printf("[Polling] update metrics from %s", minioPath)
 
-		resp, err := http.Get(fullURL)
+		resp, err := http.Get(minioPath)
 		if err != nil {
 			http.Error(w, "Error fetching metrics: "+err.Error(), http.StatusInternalServerError)
 			return
