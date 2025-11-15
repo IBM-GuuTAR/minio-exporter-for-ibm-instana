@@ -62,8 +62,8 @@ func main() {
 	log.Println("[Registering MinIo] BaseUrl:", minioBaseURL)
 
 	for _, endpoint := range minioV2Endpoints {
-		http.HandleFunc("/metrics/", makeHandler(endpoint.Url))
 		log.Println("[Registering Handler] service:", endpoint.Name, "endpoint:", endpoint.Url)
+		http.HandleFunc("/metrics/"+endpoint.Name, makeHandler(endpoint.Url))
 	}
 
 	log.Printf("Starting MinIO pass-through exporter on :%s/metrics", port)
