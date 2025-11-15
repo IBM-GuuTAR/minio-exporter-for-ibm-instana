@@ -33,16 +33,10 @@ func getenv(key, fallback string) string {
 
 func makeHandler(minioPath string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("[Polling] update metrics from %s", minioPath)
+		fullURL := minioBaseURL + minioPath
+		log.Printf("[Polling] update metrics from %s", fullURL)
 
-		client := &http.Client{}
-		req, err := http.NewRequest("GET", minioBaseURL+minioPath, nil)
-		if err != nil {
-			http.Error(w, "Error creating request: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		resp, err := client.Do(req)
+		resp, err := http.Get(fullURL)
 		if err != nil {
 			http.Error(w, "Error fetching metrics: "+err.Error(), http.StatusInternalServerError)
 			return
@@ -65,11 +59,11 @@ func makeHandler(minioPath string) http.HandlerFunc {
 func main() {
 	port := getenv("EXPORTER_PORT", "8080")
 
-	log.Printf("[Registering MinIo] BaseUrl:", minioBaseURL)
+	log.Println("[Registering MinIo] BaseUrl:", minioBaseURL)
 
 	for _, endpoint := range minioV2Endpoints {
 		http.HandleFunc("/metrics/cluter", makeHandler(endpoint.Url))
-		log.Printf("[Registering Handler] service:", endpoint.Name, "endpoint:", endpoint.Url)
+		log.Println("[Registering Handler] service:", endpoint.Name, "endpoint:", endpoint.Url)
 	}
 
 	log.Printf("Starting MinIO pass-through exporter on :%s/metrics", port)
