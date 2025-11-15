@@ -1,24 +1,27 @@
 package main
 
 import (
-	"bufio"
-	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
-	"strconv"
-	"strings"
-
-	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
+type MinioEndpoint struct {
+	Name string
+	Url  string
+}
+
 var (
-	minioURL       = getenv("MINIO_URL", "http://localhost:9000")
-	minioAccessKey = getenv("MINIO_ACCESS_KEY", "minioaccess")
-	minioSecretKey = getenv("MINIO_SECRET_KEY", "miniosecret")
-	metricsPath    = "/minio/v2/metrics/cluster"
-	port		   = getenv("EXPORTER_PORT", "8000")
+	minioBaseURL = getenv("MINIO_URL", "http://localhost:9000")
+	// minioAccessKey = getenv("MINIO_ACCESS_KEY", "minioaccess")
+	// minioSecretKey = getenv("MINIO_SECRET_KEY", "miniosecret")
+	minioV2Endpoints = []MinioEndpoint{
+		{Name: "cluster", Url: minioBaseURL + "/minio/v2/metrics/cluster"},
+		{Name: "bucket", Url: minioBaseURL + "/minio/v2/metrics/bucket"},
+		{Name: "resource", Url: minioBaseURL + "/minio/v2/metrics/resource"},
+		{Name: "node", Url: minioBaseURL + "/minio/v2/metrics/node"},
+	}
 )
 
 func getenv(key, fallback string) string {
@@ -28,78 +31,47 @@ func getenv(key, fallback string) string {
 	return fallback
 }
 
-func sanitizeMetricName(name string) string {
-	name = strings.ReplaceAll(name, ".", "_")
-	name = strings.ReplaceAll(name, "-", "_")
-	name = strings.ReplaceAll(name, "/", "_")
-	return name
-}
+func makeHandler(minioPath string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("[Polling] update metrics from %s", minioPath)
 
-func fetchMinioMetrics() (map[string]float64, error) {
-	req, err := http.NewRequest("GET", minioURL+metricsPath, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.SetBasicAuth(minioAccessKey, minioSecretKey)
-
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("received HTTP %d", resp.StatusCode)
-	}
-
-	metrics := make(map[string]float64)
-	scanner := bufio.NewScanner(resp.Body)
-	for scanner.Scan() {
-		line := scanner.Text()
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		parts := strings.Fields(line)
-		if len(parts) < 2 {
-			continue
-		}
-		name := sanitizeMetricName(parts[0])
-		value, err := strconv.ParseFloat(parts[1], 64)
+		client := &http.Client{}
+		req, err := http.NewRequest("GET", minioBaseURL+minioPath, nil)
 		if err != nil {
-			continue
+			http.Error(w, "Error creating request: "+err.Error(), http.StatusInternalServerError)
+			return
 		}
-		metrics[name] = value
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, err
-	}
-	return metrics, nil
-}
 
-func metricsHandler(w http.ResponseWriter, r *http.Request) {
-	reg := prometheus.NewRegistry()
+		resp, err := client.Do(req)
+		if err != nil {
+			http.Error(w, "Error fetching metrics: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		defer resp.Body.Close()
 
-	metrics, err := fetchMinioMetrics()
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Error fetching MinIO metrics: %v", err), http.StatusInternalServerError)
-		return
+		if resp.StatusCode != 200 {
+			http.Error(w, "MinIO returned status: "+resp.Status, http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "text/plain; version=0.0.4")
+		_, err = io.Copy(w, resp.Body)
+		if err != nil {
+			log.Println("Error copying response:", err)
+		}
 	}
-
-	for name, value := range metrics {
-		g := prometheus.NewGauge(prometheus.GaugeOpts{
-			Name: name,
-			Help: "Converted metric from MinIO: " + name,
-		})
-		g.Set(value)
-		reg.MustRegister(g)
-	}
-
-	promhttp.HandlerFor(reg, promhttp.HandlerOpts{}).ServeHTTP(w, r)
 }
 
 func main() {
-	http.HandleFunc("/metrics", metricsHandler)
-	log.Printf("Starting MinIO exporter on :%s/metrics", port)
+	port := getenv("EXPORTER_PORT", "8080")
+
+	log.Printf("[Registering MinIo] BaseUrl:", minioBaseURL)
+
+	for _, endpoint := range minioV2Endpoints {
+		http.HandleFunc("/metrics/cluter", makeHandler(endpoint.Url))
+		log.Printf("[Registering Handler] service:", endpoint.Name, "endpoint:", endpoint.Url)
+	}
+
+	log.Printf("Starting MinIO pass-through exporter on :%s/metrics", port)
 	log.Fatal(http.ListenAndServe(":"+port, nil))
 }
