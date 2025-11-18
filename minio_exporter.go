@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"time"
 )
 
 type MinioEndpoint struct {
@@ -24,6 +25,10 @@ var (
 	}
 )
 
+var httpClient = &http.Client{
+	Timeout: 10 * time.Second,
+}
+
 func getenv(key, fallback string) string {
 	if value := os.Getenv(key); value != "" {
 		return value
@@ -33,32 +38,45 @@ func getenv(key, fallback string) string {
 
 func makeHandler(minioPath string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("[Polling] update metrics from %s", minioPath)
+		start := time.Now()
+		log.Printf("[Polling] GET %s", minioPath)
 
-		resp, err := http.Get(minioPath)
+		resp, err := httpClient.Get(minioPath)
 		if err != nil {
-			http.Error(w, "Error fetching metrics: "+err.Error(), http.StatusInternalServerError)
+			http.Error(w, "[Fetching] Error fetching metrics: "+err.Error(), http.StatusBadGateway)
 			return
 		}
 		defer resp.Body.Close()
 
-		if resp.StatusCode != 200 {
-			http.Error(w, "MinIO returned status: "+resp.Status, http.StatusInternalServerError)
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			http.Error(w, "[Fetching] MinIO returned "+resp.Status+" - "+string(body), http.StatusBadGateway)
 			return
 		}
 
+		// Forward headers from MinIO
+		for k, values := range resp.Header {
+			for _, v := range values {
+				w.Header().Add(k, v)
+			}
+		}
+
+		// overwrite content-type with Prometheus standard
 		w.Header().Set("Content-Type", "text/plain; version=0.0.4")
+
 		_, err = io.Copy(w, resp.Body)
 		if err != nil {
-			log.Println("Error copying response:", err)
+			log.Println("[Responsing] Error copying response:", err)
 		}
+
+		log.Printf("[Done] %s (duration: %v)", minioPath, time.Since(start))
 	}
 }
 
 func main() {
 	port := getenv("EXPORTER_PORT", "8080")
 
-	log.Println("[Registering MinIo] BaseUrl:", minioBaseURL)
+	log.Println("[Registering MinIO] BaseUrl:", minioBaseURL)
 
 	for _, endpoint := range minioV2Endpoints {
 		log.Println("[Registering Handler] service:", endpoint.Name, "endpoint:", endpoint.Url)
