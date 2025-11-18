@@ -1,0 +1,16 @@
+[Unit]
+Description=MinIO Pass-Through Prometheus Exporter
+After=network.target
+
+[Service]
+Type=simple
+User=prometheus
+Group=prometheus
+ExecStart=/usr/local/bin/minio_exporter
+Environment=MINIO_URL=http://127.0.0.1:9000
+Environment=EXPORTER_PORT=8080
+Restart=always
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target
