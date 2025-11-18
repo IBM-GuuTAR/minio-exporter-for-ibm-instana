@@ -14,7 +14,8 @@ type MinioEndpoint struct {
 }
 
 var (
-	minioBaseURL = getenv("MINIO_URL", "http://localhost:9000")
+	minioBaseURL     = getenv("MINIO_URL", "http://localhost:9000")
+	minioBearerToken = getenv("MINIO_BEARER_TOKEN", "") // NEW: Bearer token support
 	// minioAccessKey = getenv("MINIO_ACCESS_KEY", "minioaccess")
 	// minioSecretKey = getenv("MINIO_SECRET_KEY", "miniosecret")
 	minioV2Endpoints = []MinioEndpoint{
@@ -41,13 +42,18 @@ func makeHandler(minioPath string) http.HandlerFunc {
 		start := time.Now()
 		log.Printf("[Polling] GET %s", minioPath)
 
-		resp, err := httpClient.Get(minioPath)
+		req, err := http.NewRequest("GET", minioPath, nil)
 		if err != nil {
-			http.Error(w, "[Fetching] Error fetching metrics: "+err.Error(), http.StatusBadGateway)
+			http.Error(w, "Error creating request: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
-		defer resp.Body.Close()
+		// Add bearer token if need
+		if minioBearerToken != "" {
+			req.Header.Set("Authorization", "Bearer "+minioBearerToken)
+		}
+		resp, err := httpClient.Do(req)
 
+		// If status is not ok throw error
 		if resp.StatusCode != http.StatusOK {
 			body, _ := io.ReadAll(resp.Body)
 			http.Error(w, "[Fetching] MinIO returned "+resp.Status+" - "+string(body), http.StatusBadGateway)
